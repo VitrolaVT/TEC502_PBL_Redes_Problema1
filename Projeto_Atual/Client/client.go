@@ -117,7 +117,7 @@ func main() {
 
 			case "Fim_Batalha":
 				color.Yellow("Batalha finalizada!")
-				color.Cyan("O vencedor foi o jogador %s!", resposta.Mensagem)
+				color.Cyan(resposta.Mensagem)
 				estadoAtual = EstadoPareado
 
 			case "Enviar_Próxima_Carta":
@@ -134,6 +134,8 @@ func main() {
 
 			case "Turno_Realizado":
 				color.Yellow("Turno Realizado!")
+				color.Yellow(resposta.Mensagem)
+				imprimirTanques(resposta.Cartas)
 
 			default:
 				fmt.Println("Resposta recebida com tipo desconhecido: ", resposta.Tipo)

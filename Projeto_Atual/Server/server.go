@@ -77,6 +77,12 @@ var pacote_1 = []Tanque{
 	{"Titan (Heavy)", "server", 220, 55},
 }
 
+// Constantes dos estados possíveis para uma batalha
+const (
+	EstadoEsperandoCarta = iota
+	EstadoRealizandoTurno
+)
+
 func main() {
 	//Criação de porta
 	ln, err := net.Listen("tcp", ":8080")
@@ -139,7 +145,52 @@ func criarConexao(conn net.Conn) {
 			transmitirMensagem(conn, requisicao.Id_remetente, requisicao.Id_destinatario, requisicao.Mensagem)
 
 		case "Abrir_Pacote":
-			sortearCartas(conn)
+			sortearCartas(conn, requisicao.Id_remetente)
+
+		case "Batalhar":
+			batalha := Batalha{
+				Jogador1:     requisicao.Id_remetente,
+				Jogador2:     requisicao.Id_destinatario,
+				Canal1:       make(chan Tanque),
+				Canal2:       make(chan Tanque),
+				Encerramento: make(chan bool),
+			}
+			muBatalhas.Lock()
+			batalhas[requisicao.Id_remetente] = batalha
+			batalhas[requisicao.Id_destinatario] = batalha
+			muBatalhas.Unlock()
+
+			go realizarBatalha(&batalha)
+
+		case "Próxima_Carta":
+			muBatalhas.RLock()
+			batalha, existe := batalhas[requisicao.Id_remetente]
+			muBatalhas.RUnlock()
+
+			if !existe {
+				resposta.Tipo = "Erro"
+				resposta.Mensagem = "Você não está em uma batalha"
+				enviarResposta(conn, resposta)
+			} else {
+				//Verifica qual jogador é para mandar no canal correto
+				if requisicao.Id_remetente == batalha.Jogador1 {
+					select {
+					case batalha.Canal1 <- requisicao.Carta:
+						//Apenas envia
+					default:
+						color.Red("Canal1 cheio ou encerrado para %s", batalha.Jogador1)
+						batalha.Encerramento <- true
+					}
+				} else if requisicao.Id_remetente == batalha.Jogador2 {
+					select {
+					case batalha.Canal2 <- requisicao.Carta:
+						//Apenas envia
+					default:
+						color.Red("Canal2 cheio ou encerrado para %s", batalha.Jogador2)
+						batalha.Encerramento <- true
+					}
+				}
+			}
 
 		default:
 			resposta.Tipo = "Erro"
@@ -224,7 +275,7 @@ func transmitirMensagem(conn net.Conn, id_remetente, idDestinatario, mensagem st
 }
 
 // Função de sortear cartas do pacote escolhido
-func sortearCartas(conn net.Conn) {
+func sortearCartas(conn net.Conn, id string) {
 	//Cria um gerador aleatório independente usando tempo da chamada da função
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	//Bloquear acesso ao contador de pacotes disponíveis
@@ -249,6 +300,10 @@ func sortearCartas(conn net.Conn) {
 
 	for _, i := range indices {
 		cartasSorteadas = append(cartasSorteadas, pacote_1[i])
+	}
+
+	for i := range cartasSorteadas { //Trocar ID para o do jogador
+		cartasSorteadas[i].Id_jogador = id
 	}
 
 	resposta.Tipo = "Sorteio"
@@ -291,4 +346,172 @@ func tratarDesconexao(idDesconectado string) {
 	muBatalhas.Unlock()
 
 	color.Magenta("Jogador %s desconectou", idDesconectado)
+}
+
+// Função para realizar partida/batalha entre jogadores
+func realizarBatalha(batalha *Batalha) {
+	color.Yellow("Iniciando batalha entre %s e %s", batalha.Jogador1, batalha.Jogador2)
+
+	//Pegar conexão de cada jogador para não dar RLock e RUnlock várias vezes
+	muClientes.RLock()
+	connJogador1 := clientes[batalha.Jogador1]
+	connJogador2 := clientes[batalha.Jogador2]
+	muClientes.RUnlock()
+
+	//Envia início da batalha para os jogadores
+	resposta := Resposta{Tipo: "Inicio_Batalha", Mensagem: batalha.Jogador2}
+	enviarResposta(connJogador1, resposta) //Jogador 1
+
+	resposta.Mensagem = batalha.Jogador1
+	enviarResposta(connJogador2, resposta) //Jogador 2
+
+	time.Sleep(2 * time.Second)
+
+	//Estado inicial de partida
+	turno := 0
+	indice1, indice2 := 0, 0
+	var carta1, carta2 *Tanque
+	var ok1, ok2 bool
+	estadoAtual := EstadoEsperandoCarta
+	var cartasTurno []Tanque
+
+	for {
+		select {
+		//Canal para caso ocorra uma desconexão de um jogador
+		case <-batalha.Encerramento:
+			color.Red("Batalha encerrada à força!")
+			muBatalhas.Lock()
+			delete(batalhas, batalha.Jogador1)
+			delete(batalhas, batalha.Jogador2)
+			muBatalhas.Unlock()
+
+			close(batalha.Canal1)
+			close(batalha.Canal2)
+			close(batalha.Encerramento)
+			return
+		default:
+		}
+
+		switch estadoAtual {
+		case EstadoEsperandoCarta:
+			if carta1 == nil {
+				resposta.Tipo = "Enviar_Próxima_Carta"
+				resposta.Mensagem = fmt.Sprintf("%d", indice1)
+				enviarResposta(connJogador1, resposta)
+				carta1, ok1 = esperarCarta(batalha.Canal1, 3*time.Second)
+			} else {
+				ok1 = true
+			}
+
+			if carta2 == nil {
+				resposta.Tipo = "Enviar_Próxima_Carta"
+				resposta.Mensagem = fmt.Sprintf("%d", indice2)
+				enviarResposta(connJogador2, resposta)
+				carta2, ok2 = esperarCarta(batalha.Canal2, 3*time.Second)
+			} else {
+				ok2 = true
+			}
+
+			if !ok1 || !ok2 {
+				finalizarBatalha(batalha, connJogador1, connJogador2)
+
+				muBatalhas.Lock()
+				delete(batalhas, batalha.Jogador1)
+				delete(batalhas, batalha.Jogador2)
+				muBatalhas.Unlock()
+				return
+			}
+
+			estadoAtual = EstadoRealizandoTurno
+		case EstadoRealizandoTurno:
+			cartasTurno = nil
+			if turno%2 == 0 { //Jogador1 ataca
+				carta2.Vida -= carta1.Ataque
+
+				cartasTurno = append(cartasTurno, *carta1, *carta2)
+				resposta.Tipo = "Turno_Realizado"
+				resposta.Mensagem = fmt.Sprintf("Jogador 1 jogou no turno %d", turno)
+				resposta.Cartas = cartasTurno
+
+				enviarResposta(connJogador1, resposta)
+				enviarResposta(connJogador2, resposta)
+
+			} else { // Jogador2 ataca
+				carta1.Vida -= carta2.Ataque
+
+				cartasTurno = append(cartasTurno, *carta1, *carta2)
+				resposta.Tipo = "Turno_Realizado"
+				resposta.Mensagem = fmt.Sprintf("Jogador 2 jogou no turno %d", turno)
+				resposta.Cartas = cartasTurno
+
+				enviarResposta(connJogador1, resposta)
+				enviarResposta(connJogador2, resposta)
+
+			}
+
+			//Verificar vida das cartas dos jogadores
+			if carta2.Vida <= 0 {
+				carta2 = nil
+				indice2++
+				estadoAtual = EstadoEsperandoCarta
+			} else if carta1.Vida <= 0 {
+				carta1 = nil
+				indice1++
+				estadoAtual = EstadoEsperandoCarta
+			} else {
+				estadoAtual = EstadoRealizandoTurno
+			}
+
+			//Checa se acabou o deck de batalha de um jogador
+			if indice1 >= 5 {
+				declararVencedor(batalha, batalha.Jogador2, connJogador1, connJogador2)
+				return
+			}
+			if indice2 >= 5 {
+				declararVencedor(batalha, batalha.Jogador1, connJogador1, connJogador2)
+
+				muBatalhas.Lock()
+				delete(batalhas, batalha.Jogador1)
+				delete(batalhas, batalha.Jogador2)
+				muBatalhas.Unlock()
+				return
+			}
+
+			turno++
+		}
+	}
+}
+
+// Função de timeout para espera de carta
+func esperarCarta(canal chan Tanque, tempo time.Duration) (*Tanque, bool) {
+	timeout := time.After(tempo)
+	select {
+	case c := <-canal:
+		return &c, true
+	case <-timeout:
+		return nil, false
+	}
+}
+
+// Função para finalizar adequadamente os canais da batalha e a lista de batalha
+func finalizarBatalha(batalha *Batalha, conn1, conn2 net.Conn) {
+	resposta := Resposta{Tipo: "Fim_Batalha", Mensagem: "Timeout!! Sem vencedor"}
+	enviarResposta(conn1, resposta)
+	enviarResposta(conn2, resposta)
+
+	close(batalha.Canal1)
+	close(batalha.Canal2)
+	close(batalha.Encerramento)
+
+}
+
+// Função para declarar vencedor da partida
+func declararVencedor(batalha *Batalha, vencedor string, conn1, conn2 net.Conn) {
+	resposta := Resposta{Tipo: "Fim_Batalha", Mensagem: fmt.Sprintf("O jogador %s venceu!!", vencedor)}
+	enviarResposta(conn1, resposta)
+	enviarResposta(conn2, resposta)
+
+	close(batalha.Canal1)
+	close(batalha.Canal2)
+	close(batalha.Encerramento)
 }
