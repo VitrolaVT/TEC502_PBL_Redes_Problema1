@@ -36,6 +36,15 @@ type Tanque struct {
 	Ataque     int    `json:"ataque"`
 }
 
+// Struct para dados de uma batalha
+type Batalha struct {
+	Jogador1     string
+	Jogador2     string
+	Canal1       chan Tanque
+	Canal2       chan Tanque
+	Encerramento chan bool
+}
+
 // Variáveis do server
 var (
 	clientes      = make(map[string]net.Conn) //Map para guardar conexões através dos IDs
@@ -45,6 +54,8 @@ var (
 	idCounter     int                         //Contador do ID
 	pacoteCounter = 10                        //Contador de pacotes disponíveis
 	muPacote      sync.Mutex                  //Mutex para sincronização do estoques
+	batalhas      = make(map[string]Batalha)  //Map para guardar batalhas em andamento
+	muBatalhas    sync.RWMutex                //Mutex para sincronizar as batalhas
 )
 
 // Pacote 1 de cartas
@@ -107,11 +118,7 @@ func criarConexao(conn net.Conn) {
 	for {
 		msg, err := reader.ReadBytes('\n')
 		if err != nil {
-			muClientes.Lock()
-			delete(clientes, id_cliente)
-			muClientes.Unlock()
-
-			delete(pares, id_cliente)
+			tratarDesconexao(id_cliente)
 			return
 		}
 
@@ -249,4 +256,39 @@ func sortearCartas(conn net.Conn) {
 	resposta.Cartas = cartasSorteadas
 
 	enviarResposta(conn, resposta)
+}
+
+// Função para tratar desconexão de jogador
+func tratarDesconexao(idDesconectado string) {
+	//Atualizar lista e jogadores conectados
+	muClientes.Lock()
+	if conn, ok := clientes[idDesconectado]; ok {
+		conn.Close()
+		delete(clientes, idDesconectado)
+	}
+	muClientes.Unlock()
+
+	//Atualizar lista de jogadores pareados se necessário
+	muPares.Lock()
+	if idPar, ok := pares[idDesconectado]; ok {
+		muClientes.RLock()
+		conn2 := clientes[idPar]
+		resposta := Resposta{Tipo: "Desconexão", Mensagem: "Jogador desconectou"}
+		enviarResposta(conn2, resposta)
+		muClientes.RUnlock()
+
+		delete(pares, idDesconectado)
+		delete(pares, idPar)
+	}
+	muPares.Unlock()
+
+	//Atualizar lista batalhas se existirem
+	muBatalhas.Lock()
+	if batalhaExistente, ok := batalhas[idDesconectado]; ok {
+		batalhaExistente.Encerramento <- true
+		delete(batalhas, idDesconectado)
+	}
+	muBatalhas.Unlock()
+
+	color.Magenta("Jogador %s desconectou", idDesconectado)
 }

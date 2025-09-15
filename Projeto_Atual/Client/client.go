@@ -63,7 +63,7 @@ func main() {
 
 	//Estado atual do jogador
 	var estadoAtual int
-	estadoAtual = EstadoLivre
+	estadoAtual = EstadoEsperandoResposta
 
 	//Lista para guardar deck de batalha de uma possível batalha
 	deckBatalha := make([]Tanque, 0, 5)
@@ -83,9 +83,15 @@ func main() {
 					estadoAtual = EstadoPareado
 				}
 
+			case "Desconexão":
+				color.Yellow("Parece que seu jogador pareado desconectou :(")
+				estadoAtual = EstadoLivre
+				idParceiro = "none"
+
 			case "Criaçao_Id":
 				color.Yellow("Seu ID é %s", resposta.Mensagem)
 				idPessoal = resposta.Mensagem
+				estadoAtual = EstadoLivre
 
 			case "Pareamento":
 				color.Green("Pareamento realizado com %s", resposta.Mensagem)
