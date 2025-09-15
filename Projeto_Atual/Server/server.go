@@ -38,11 +38,12 @@ type Tanque struct {
 
 // Struct para dados de uma batalha
 type Batalha struct {
-	Jogador1     string
-	Jogador2     string
-	Canal1       chan Tanque
-	Canal2       chan Tanque
-	Encerramento chan bool
+	Jogador1         string
+	Jogador2         string
+	Canal1           chan Tanque
+	Canal2           chan Tanque
+	Encerramento     chan bool
+	EncerramentoOnce sync.Once
 }
 
 // Variáveis do server
@@ -54,7 +55,7 @@ var (
 	idCounter     int                         //Contador do ID
 	pacoteCounter = 10                        //Contador de pacotes disponíveis
 	muPacote      sync.Mutex                  //Mutex para sincronização do estoques
-	batalhas      = make(map[string]Batalha)  //Map para guardar batalhas em andamento
+	batalhas      = make(map[string]*Batalha) //Map para guardar batalhas em andamento
 	muBatalhas    sync.RWMutex                //Mutex para sincronizar as batalhas
 )
 
@@ -156,8 +157,8 @@ func criarConexao(conn net.Conn) {
 				Encerramento: make(chan bool),
 			}
 			muBatalhas.Lock()
-			batalhas[requisicao.Id_remetente] = batalha
-			batalhas[requisicao.Id_destinatario] = batalha
+			batalhas[requisicao.Id_remetente] = &batalha
+			batalhas[requisicao.Id_destinatario] = &batalha
 			muBatalhas.Unlock()
 
 			go realizarBatalha(&batalha)
@@ -187,7 +188,10 @@ func criarConexao(conn net.Conn) {
 						//Apenas envia
 					default:
 						color.Red("Canal2 cheio ou encerrado para %s", batalha.Jogador2)
-						batalha.Encerramento <- true
+						select {
+						case batalha.Encerramento <- true:
+						default:
+						}
 					}
 				}
 			}
@@ -340,8 +344,12 @@ func tratarDesconexao(idDesconectado string) {
 	//Atualizar lista batalhas se existirem
 	muBatalhas.Lock()
 	if batalhaExistente, ok := batalhas[idDesconectado]; ok {
-		batalhaExistente.Encerramento <- true
+		select {
+		case batalhaExistente.Encerramento <- true:
+		default:
+		}
 		delete(batalhas, idDesconectado)
+		delete(batalhas, batalhaExistente.Jogador2)
 	}
 	muBatalhas.Unlock()
 
@@ -380,14 +388,7 @@ func realizarBatalha(batalha *Batalha) {
 		//Canal para caso ocorra uma desconexão de um jogador
 		case <-batalha.Encerramento:
 			color.Red("Batalha encerrada à força!")
-			muBatalhas.Lock()
-			delete(batalhas, batalha.Jogador1)
-			delete(batalhas, batalha.Jogador2)
-			muBatalhas.Unlock()
-
-			close(batalha.Canal1)
-			close(batalha.Canal2)
-			close(batalha.Encerramento)
+			encerrarBatalha(batalha, batalha.Jogador1, batalha.Jogador2, "desconexão/força")
 			return
 		default:
 		}
@@ -413,12 +414,7 @@ func realizarBatalha(batalha *Batalha) {
 			}
 
 			if !ok1 || !ok2 {
-				finalizarBatalha(batalha, connJogador1, connJogador2)
-
-				muBatalhas.Lock()
-				delete(batalhas, batalha.Jogador1)
-				delete(batalhas, batalha.Jogador2)
-				muBatalhas.Unlock()
+				encerrarBatalha(batalha, batalha.Jogador1, batalha.Jogador2, "timeout")
 				return
 			}
 
@@ -464,16 +460,11 @@ func realizarBatalha(batalha *Batalha) {
 
 			//Checa se acabou o deck de batalha de um jogador
 			if indice1 >= 5 {
-				declararVencedor(batalha, batalha.Jogador2, connJogador1, connJogador2)
+				encerrarBatalha(batalha, batalha.Jogador2, batalha.Jogador1, "sem cartas restantes")
 				return
 			}
 			if indice2 >= 5 {
-				declararVencedor(batalha, batalha.Jogador1, connJogador1, connJogador2)
-
-				muBatalhas.Lock()
-				delete(batalhas, batalha.Jogador1)
-				delete(batalhas, batalha.Jogador2)
-				muBatalhas.Unlock()
+				encerrarBatalha(batalha, batalha.Jogador1, batalha.Jogador2, "sem cartas restantes")
 				return
 			}
 
@@ -493,25 +484,32 @@ func esperarCarta(canal chan Tanque, tempo time.Duration) (*Tanque, bool) {
 	}
 }
 
-// Função para finalizar adequadamente os canais da batalha e a lista de batalha
-func finalizarBatalha(batalha *Batalha, conn1, conn2 net.Conn) {
-	resposta := Resposta{Tipo: "Fim_Batalha", Mensagem: "Timeout!! Sem vencedor"}
-	enviarResposta(conn1, resposta)
-	enviarResposta(conn2, resposta)
+// Função centralizada para finalizar corretamente uma batalha(fechar canais e atualizar map)
+func encerrarBatalha(batalha *Batalha, vencedor, perdedor string, motivo string) {
+	//Remover batalha do map
+	muBatalhas.Lock()
+	delete(batalhas, batalha.Jogador1)
+	delete(batalhas, batalha.Jogador2)
+	muBatalhas.Unlock()
 
-	close(batalha.Canal1)
-	close(batalha.Canal2)
-	close(batalha.Encerramento)
+	//Notificar para as conexões existentes a mensagem e fim de partida
+	var resposta Resposta
+	resposta.Tipo = "Fim_Batalha"
+	resposta.Mensagem = fmt.Sprintf("Batalha encerrada! %s venceu (%s).", vencedor, motivo)
 
-}
+	muClientes.RLock()
+	if conn1, ok := clientes[batalha.Jogador1]; ok {
+		enviarResposta(conn1, resposta)
+	}
+	if conn2, ok := clientes[batalha.Jogador2]; ok {
+		enviarResposta(conn2, resposta)
+	}
+	muClientes.RUnlock()
 
-// Função para declarar vencedor da partida
-func declararVencedor(batalha *Batalha, vencedor string, conn1, conn2 net.Conn) {
-	resposta := Resposta{Tipo: "Fim_Batalha", Mensagem: fmt.Sprintf("O jogador %s venceu!!", vencedor)}
-	enviarResposta(conn1, resposta)
-	enviarResposta(conn2, resposta)
-
-	close(batalha.Canal1)
-	close(batalha.Canal2)
-	close(batalha.Encerramento)
+	//Fechar canais com segurança
+	batalha.EncerramentoOnce.Do(func() {
+		close(batalha.Canal1)
+		close(batalha.Canal2)
+		close(batalha.Encerramento)
+	})
 }
