@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  server:
+    build:
+      context: ./Server
+    container_name: go-server
+    ports:
+      - "8080:8080"
+    networks:
+      - go-net
+
+  client:
+    build:
+      context: ./Client
+    container_name: go-client
+    depends_on:
+      - server
+    networks:
+      - go-net
+    stdin_open: true
+    tty: true
+    
+networks:
+  go-net:
