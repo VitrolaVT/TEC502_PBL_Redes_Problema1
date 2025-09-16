@@ -38,20 +38,23 @@ type Tanque struct {
 	Ataque     int    `json:"ataque"`
 }
 
+// Struct para requisição de Ping (UDP)
+type Ping struct {
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // Estados da máquina de estados
 const (
 	EstadoLivre = iota
 	EstadoPareado
 	EstadoEsperandoResposta
-	Estado_Batalhando
+	EstadoBatalhando
+	EstadoMostrandoLatencia
 )
 
-// Variável IP do server
-var ipServer string = "172.16.103.1"
-
 // Variáveis para informações pertinentes ao jogador
-var idPessoal, idParceiro string
-var minhasCartas []Tanque
+var idPessoal, idParceiro string //IDs próprio e de possível oponente
+var minhasCartas []Tanque        //Lista de cartas adquiridas
 
 func main() {
 	//Conexão do tipo TCP com o servidor
@@ -121,7 +124,7 @@ func main() {
 
 				color.Cyan("Seu deck de batalha é:")
 				imprimirTanques(deckBatalha)
-				estadoAtual = Estado_Batalhando
+				estadoAtual = EstadoBatalhando
 
 			case "Fim_Batalha":
 				color.Yellow("Batalha finalizada!")
@@ -170,15 +173,16 @@ func main() {
 
 	//Loop infinito e centralizado que lê do terminal
 	reader := bufio.NewReader(os.Stdin)
+	estadoAnterior := estadoAtual
 	for {
-
+		//Ver qual estado do jogador
 		switch estadoAtual {
 		case EstadoLivre:
-			fmt.Println("Comando Parear <id> / Abrir / sair: ")
+			fmt.Println("Comando Parear <id> / Abrir / Latencia / Sair: ")
 			line, _ := reader.ReadString('\n')
 			line = strings.TrimSpace(line)
 
-			if line == "sair" {
+			if line == "Sair" {
 				os.Exit(0)
 			}
 
@@ -186,24 +190,27 @@ func main() {
 				idDestinatario := strings.TrimPrefix(line, "Parear ")
 				enviarRequisicao(conn, Requisicao{Tipo: "Parear", Id_remetente: idPessoal, Id_destinatario: idDestinatario, Mensagem: "None"})
 				estadoAtual = EstadoEsperandoResposta
-			} else if strings.HasPrefix(line, "Abrir ") {
+			} else if strings.HasPrefix(line, "Abrir") {
 				enviarRequisicao(conn, Requisicao{Tipo: "Abrir_Pacote", Id_remetente: idPessoal, Id_destinatario: "None", Mensagem: "None"})
+			} else if strings.HasPrefix(line, "Latencia") {
+				estadoAnterior = EstadoLivre
+				estadoAtual = EstadoMostrandoLatencia
 			} else {
 				color.Red("Comando inválido")
 			}
 
 		case EstadoPareado:
-			fmt.Println("Comando Abrir / Mensagem / Batalhar / sair: ")
+			fmt.Println("Comando Abrir / Mensagem / Batalhar / Latencia / Sair: ")
 			line, _ := reader.ReadString('\n')
 			line = strings.TrimSpace(line)
 
-			if line == "sair" {
+			if line == "Sair" {
 				os.Exit(0)
 			}
 
-			if strings.HasPrefix(line, "Abrir ") {
+			if strings.HasPrefix(line, "Abrir") {
 				enviarRequisicao(conn, Requisicao{Tipo: "Abrir_Pacote", Id_remetente: idPessoal, Id_destinatario: "None", Mensagem: "None"})
-			} else if strings.HasPrefix(line, "Batalhar ") {
+			} else if strings.HasPrefix(line, "Batalhar") {
 				if len(minhasCartas) < 5 {
 					color.Red("Você não tem cartas suficientes para montar um deck")
 				} else {
@@ -214,6 +221,9 @@ func main() {
 				mensagem := strings.TrimPrefix(line, "Mensagem ")
 				enviarRequisicao(conn, Requisicao{Tipo: "Mensagem", Id_remetente: idPessoal, Id_destinatario: idParceiro, Mensagem: mensagem})
 
+			} else if strings.HasPrefix(line, "Latencia") {
+				estadoAnterior = EstadoPareado
+				estadoAtual = EstadoMostrandoLatencia
 			} else {
 				color.Red("Comando inválido")
 			}
@@ -222,9 +232,19 @@ func main() {
 			color.Yellow("Esperando resposta do server")
 			time.Sleep(1 * time.Second)
 
-		case Estado_Batalhando:
+		case EstadoBatalhando:
 			color.Yellow("Batalha ocorrendo!!")
 			time.Sleep(5 * time.Second)
+
+		case EstadoMostrandoLatencia:
+			color.Cyan("Medindo Latência (UDP Ping/Pong)")
+			fmt.Println("Digite Sair para voltar")
+
+			//Função para mandar continuamente requisições "ping"
+			iniciarLoopDeLatencia("localhost:8081", reader)
+
+			//Quando função terminar, devido opção de sair, voltar ao estado anterior
+			estadoAtual = estadoAnterior
 
 		default:
 			color.Red("Estado indefinido")
@@ -273,4 +293,96 @@ func imprimirTanques(lista []Tanque) {
 		color.Green("  Vida: %d", t.Vida)
 		color.Red("  Ataque: %d", t.Ataque)
 	}
+}
+
+// Função para criar loop for para mandar continuamente requisições de ping para o servidor
+func iniciarLoopDeLatencia(endereco string, reader *bufio.Reader) {
+	// Cria um canal para receber a entrada do usuário da goroutine centralizada do terminal
+	inputChan := make(chan string)
+
+	//Goroutine anônima para pegar entrada do terminal e mandar para o canal de comunicação
+	go func() {
+		line, _ := reader.ReadString('\n')
+		inputChan <- strings.TrimSpace(line)
+	}()
+
+	//Rótulo usado para pode sair do loop for mesmo em alguma parte do escopo do "select"
+loop:
+	for {
+		select {
+		//Ler do canal do terminal
+		case input := <-inputChan:
+			if input == "Sair" {
+				break loop //Sai do loop for
+			}
+
+			//Reinicia a goroutine para conseguir ler o canal novamente
+			go func() {
+				line, _ := reader.ReadString('\n')
+				inputChan <- strings.TrimSpace(line)
+			}()
+
+		//Caso nada foi digitado pelo terminal dentro de 1s, realiza medição de latência
+		case <-time.After(1 * time.Second):
+			latencia, err := medirLatenciaUnica(endereco)
+
+			if err != nil {
+				color.Red("\rFalha na medição: %v          ", err)
+			} else {
+				color.Yellow("\rLatência: %s          ", latencia.String())
+			}
+		}
+	}
+}
+
+// Função para realizar uma medição indiviual da latência
+func medirLatenciaUnica(endereco string) (time.Duration, error) {
+	//Pegar endereço do server
+	servAddr, err := net.ResolveUDPAddr("udp", endereco)
+	if err != nil {
+		return 0, err
+	}
+
+	//Adquirir conexão UDP
+	conn, err := net.DialUDP("udp", nil, servAddr)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close() //Agendar fechamento da conexão ao término
+
+	//Criar a requisição de Ping
+	pingReq := Ping{Timestamp: time.Now()}
+	err = enviarPingUDP(conn, pingReq)
+
+	if err != nil {
+		return 0, err
+	}
+
+	//Aguardar a resposta do server
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buffer := make([]byte, 1024)
+	_, _, err = conn.ReadFromUDP(buffer)
+
+	if err != nil {
+		return 0, fmt.Errorf("timeout")
+	}
+
+	return time.Since(pingReq.Timestamp), nil
+}
+
+// Função para enviar uma requisição de Ping em formato JSON via conexão UDP
+func enviarPingUDP(conn *net.UDPConn, requisicao Ping) error {
+	//Converte a requisição para formato json
+	pingJSON, err := json.Marshal(requisicao)
+	if err != nil {
+		return fmt.Errorf("erro ao criar o JSON do ping: %w", err)
+	}
+
+	//Enviar requisição serializada em json na conexão UDP
+	_, err = conn.Write(pingJSON)
+	if err != nil {
+		return fmt.Errorf("erro ao enviar ping UDP: %w", err)
+	}
+
+	return nil
 }

@@ -46,6 +46,11 @@ type Batalha struct {
 	EncerramentoOnce sync.Once
 }
 
+// Struct para requisição de Ping (UDP)
+type Ping struct {
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // Variáveis do server
 var (
 	clientes      = make(map[string]net.Conn) //Map para guardar conexões através dos IDs
@@ -66,8 +71,8 @@ var pacote_1 = []Tanque{
 	{"M22 (Light)", "server", 50, 10},
 	{"M22 (Light)", "server", 50, 10},
 	{"FIAT6614 (Light)", "server", 55, 12},
-	{"FIAT6614  (Light)", "server", 55, 12},
-	{"FIAT6614  (Light)", "server", 55, 12},
+	{"FIAT6614 (Light)", "server", 55, 12},
+	{"FIAT6614 (Light)", "server", 55, 12},
 	{"BMP (Light)", "server", 60, 15},
 	{"BMP (Light)", "server", 60, 15},
 	{"BMP (Light)", "server", 60, 15},
@@ -105,13 +110,25 @@ const (
 )
 
 func main() {
-	//Criação de porta
+	//Criação de porta TCP
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		color.Red("Erro na criação da porta")
 		panic(err)
 	}
 	color.Green("Servidor rodando na porta 8080")
+
+	//Criação de porta UDP
+	udpConn, err := net.ListenPacket("udp", ":8081")
+	if err != nil {
+		color.Red("Erro na criação da porta UDP")
+		panic(err)
+	}
+	defer udpConn.Close()
+	color.Green("Servidor UDP rodando na porta 8081")
+
+	//Inicia uma goroutine para lidar com as requisições de "Ping" (UDP)
+	go lidarPing(udpConn)
 
 	//Ouvir constantemente requisições de conexão
 	for {
@@ -527,4 +544,35 @@ func encerrarBatalha(batalha *Batalha, vencedor, perdedor string, motivo string)
 
 	//Log do servidor
 	color.Yellow("Batalha finalizada entre %s (vencedor) e %s (perdedor)", vencedor, perdedor)
+}
+
+// Função para lidar com requisições "Ping"
+func lidarPing(conn net.PacketConn) {
+	// Buffer para armazenar os dados do pacote recebido
+	buffer := make([]byte, 1024)
+
+	for {
+		//Leitura de um pacote, recebendo tamanho e endereço o cliente remetente
+		n, addr, err := conn.ReadFrom(buffer)
+		if err != nil {
+			color.Red("Erro ao ler do UDP: %v", err)
+			continue
+		}
+
+		//Deserializar pacote recebido em json para formato Ping
+		var pingReq Ping
+		err = json.Unmarshal(buffer[:n], &pingReq)
+		if err != nil {
+
+			continue
+		}
+
+		//Envia a resposta "Pong" de volta para o endereço remetente
+		_, err = conn.WriteTo([]byte("pong"), addr)
+		if err != nil {
+			color.Red("Erro ao enviar pong UDP para %s: %v", addr.String(), err)
+		}
+
+		color.Yellow("Enviado pong para %s", addr.String())
+	}
 }
