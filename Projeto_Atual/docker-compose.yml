@@ -1,25 +1,43 @@
 version: "3.8"
 
 services:
+  # Serviço do Servidor
   server:
     build:
       context: ./Server
     container_name: go-server
     ports:
-      - "8080:8080"
+      - "8080:8080" # Porta TCP para o jogo
+      - "8081:8081/udp" # Porta UDP para latência
     networks:
       - go-net
 
+  # Serviço do Cliente 
   client:
     build:
       context: ./Client
     container_name: go-client
     depends_on:
-      - server
+      - server # Garante que o servidor inicie primeiro
     networks:
       - go-net
-    stdin_open: true
-    tty: true
+    stdin_open: true # Necessário para interação manual
+    tty: true        # Necessário para interação manual
     
+  # Serviço de testes de estresse
+  stress-test:
+    build:
+      context: ./Test
+    container_name: go-test_stress
+    depends_on:
+      - server # Garante que o servidor inicie primeiro
+    networks:
+      - go-net
+    command: >
+      sh -c "echo 'Aguardando o servidor iniciar...' && 
+             sleep 5 && 
+             echo 'Iniciando o teste de estresse!' && 
+             ./stress-tester -clientes=100 -cenario=chaos -duracao=45s"
+
 networks:
   go-net:
