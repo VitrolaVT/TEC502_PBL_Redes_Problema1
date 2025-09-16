@@ -13,4 +13,4 @@ RUN go build -o test
 RUN chmod +x ./test
 
 # Comando para iniciar o teste.
-CMD ["./stress-tester", "-clientes=10", "-cenario=chaos", "-duracao=30s"]
+CMD ["./test", "-clientes=10", "-cenario=chaos", "-duracao=30s"]

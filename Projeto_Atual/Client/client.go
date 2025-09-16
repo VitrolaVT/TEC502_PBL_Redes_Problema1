@@ -57,8 +57,10 @@ var idPessoal, idParceiro string //IDs próprio e de possível oponente
 var minhasCartas []Tanque        //Lista de cartas adquiridas
 
 func main() {
+	color.NoColor = false
+
 	//Conexão do tipo TCP com o servidor
-	conn, err := net.Dial("tcp", "localhost:8080")
+	conn, err := net.Dial("tcp", "server:8080")
 	if err != nil {
 		panic(err)
 	}
@@ -241,7 +243,7 @@ func main() {
 			fmt.Println("Digite Sair para voltar")
 
 			//Função para mandar continuamente requisições "ping"
-			iniciarLoopDeLatencia("localhost:8081", reader)
+			iniciarLoopDeLatencia("server:8081", reader)
 
 			//Quando função terminar, devido opção de sair, voltar ao estado anterior
 			estadoAtual = estadoAnterior

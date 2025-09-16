@@ -25,10 +25,10 @@ services:
     tty: true        # Necessário para interação manual
     
   # Serviço de testes de estresse
-  stress-test:
+  test:
     build:
       context: ./Test
-    container_name: go-test_stress
+    container_name: go-test
     depends_on:
       - server # Garante que o servidor inicie primeiro
     networks:
@@ -37,7 +37,7 @@ services:
       sh -c "echo 'Aguardando o servidor iniciar...' && 
              sleep 5 && 
              echo 'Iniciando o teste de estresse!' && 
-             ./stress-tester -clientes=100 -cenario=chaos -duracao=45s"
+             ./test -clientes=100 -cenario=chaos -duracao=45s"
 
 networks:
   go-net:

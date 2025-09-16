@@ -110,6 +110,8 @@ const (
 )
 
 func main() {
+	color.NoColor = false
+
 	//Criação de porta TCP
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
