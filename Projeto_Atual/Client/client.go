@@ -55,7 +55,7 @@ var minhasCartas []Tanque
 
 func main() {
 	//Conexão do tipo TCP com o servidor
-	conn, err := net.Dial("tcp", "10.0.0.117:8080")
+	conn, err := net.Dial("tcp", "localhost:8080")
 	if err != nil {
 		panic(err)
 	}
@@ -110,7 +110,15 @@ func main() {
 			case "Inicio_Batalha":
 				color.Yellow("Batalha iniciada com %s", resposta.Mensagem)
 				deckBatalha = nil
-				deckBatalha = append(deckBatalha, sortearDeck()...)
+				if len(minhasCartas) > 0 {
+					deckBatalha = append(deckBatalha, sortearDeck()...)
+				} else {
+					//Inicializa deck de batalha com cartas inoperantes se não abriu um pacote
+					for i := 0; i < 5; i++ {
+						deckBatalha = append(deckBatalha, Tanque{Modelo: "Treinamento", Id_jogador: idPessoal, Vida: 1 + i, Ataque: 1})
+					}
+				}
+
 				color.Cyan("Seu deck de batalha é:")
 				imprimirTanques(deckBatalha)
 				estadoAtual = Estado_Batalhando
@@ -122,15 +130,31 @@ func main() {
 
 			case "Enviar_Próxima_Carta":
 				indice, err := strconv.Atoi(resposta.Mensagem)
+				color.Red("Indice %d", indice)
 
 				if err != nil {
 					fmt.Println("Erro ao converter:", err)
 					panic(err)
 				}
 
-				enviarRequisicao(conn, Requisicao{
-					Tipo: "Próxima_Carta", Id_remetente: idPessoal, Id_destinatario: idParceiro,
-					Mensagem: "Carta", Carta: deckBatalha[indice]})
+				//Verificar se indice é válido
+				if indice < 0 || indice >= len(deckBatalha) {
+					color.Red("ERRO: Índice %d fora do range do deck (0-%d)", indice, len(deckBatalha)-1)
+					//Enviar carta padrão para não travar
+					enviarRequisicao(conn, Requisicao{
+						Tipo:            "Próxima_Carta",
+						Id_remetente:    idPessoal,
+						Id_destinatario: idParceiro,
+						Mensagem:        "Carta",
+						Carta:           Tanque{Modelo: "Padrão", Vida: 10, Ataque: 1}})
+				} else {
+					enviarRequisicao(conn, Requisicao{
+						Tipo:            "Próxima_Carta",
+						Id_remetente:    idPessoal,
+						Id_destinatario: idParceiro,
+						Mensagem:        "Carta",
+						Carta:           deckBatalha[indice]})
+				}
 
 			case "Turno_Realizado":
 				color.Yellow("Turno Realizado!")
@@ -138,7 +162,8 @@ func main() {
 				imprimirTanques(resposta.Cartas)
 
 			default:
-				fmt.Println("Resposta recebida com tipo desconhecido: ", resposta.Tipo)
+				color.Red("Resposta recebida com tipo desconhecido: ", resposta.Tipo)
+				os.Exit(0)
 			}
 		}
 	}()

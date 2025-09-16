@@ -399,7 +399,9 @@ func realizarBatalha(batalha *Batalha) {
 				resposta.Tipo = "Enviar_Próxima_Carta"
 				resposta.Mensagem = fmt.Sprintf("%d", indice1)
 				enviarResposta(connJogador1, resposta)
-				carta1, ok1 = esperarCarta(batalha.Canal1, 3*time.Second)
+				color.Magenta("Aqui 1")
+				carta1, ok1 = esperarCarta(batalha.Canal1, 30*time.Second)
+				color.Magenta("Pedir nova carta jogador 1: %d", indice1)
 			} else {
 				ok1 = true
 			}
@@ -408,7 +410,9 @@ func realizarBatalha(batalha *Batalha) {
 				resposta.Tipo = "Enviar_Próxima_Carta"
 				resposta.Mensagem = fmt.Sprintf("%d", indice2)
 				enviarResposta(connJogador2, resposta)
-				carta2, ok2 = esperarCarta(batalha.Canal2, 3*time.Second)
+				color.Magenta("Aqui 2")
+				carta2, ok2 = esperarCarta(batalha.Canal2, 30*time.Second)
+				color.Magenta("Pedir nova carta jogador 2: %d", indice2)
 			} else {
 				ok2 = true
 			}
@@ -423,40 +427,38 @@ func realizarBatalha(batalha *Batalha) {
 			cartasTurno = nil
 			if turno%2 == 0 { //Jogador1 ataca
 				carta2.Vida -= carta1.Ataque
-
-				cartasTurno = append(cartasTurno, *carta1, *carta2)
-				resposta.Tipo = "Turno_Realizado"
 				resposta.Mensagem = fmt.Sprintf("Jogador 1 jogou no turno %d", turno)
-				resposta.Cartas = cartasTurno
-
-				enviarResposta(connJogador1, resposta)
-				enviarResposta(connJogador2, resposta)
-
-			} else { // Jogador2 ataca
+			} else { //Jogador2 ataca
 				carta1.Vida -= carta2.Ataque
-
-				cartasTurno = append(cartasTurno, *carta1, *carta2)
-				resposta.Tipo = "Turno_Realizado"
 				resposta.Mensagem = fmt.Sprintf("Jogador 2 jogou no turno %d", turno)
-				resposta.Cartas = cartasTurno
-
-				enviarResposta(connJogador1, resposta)
-				enviarResposta(connJogador2, resposta)
-
 			}
 
-			//Verificar vida das cartas dos jogadores
-			if carta2.Vida <= 0 {
-				carta2 = nil
-				indice2++
-				estadoAtual = EstadoEsperandoCarta
-			} else if carta1.Vida <= 0 {
+			//Enviar resultado do turno
+			cartasTurno = append(cartasTurno, *carta1, *carta2)
+			resposta.Tipo = "Turno_Realizado"
+			resposta.Cartas = cartasTurno
+			enviarResposta(connJogador1, resposta)
+			enviarResposta(connJogador2, resposta)
+
+			//Verificar vida das cartas dos jogadores e preparar para próxima carta
+			carta1Destruida := carta1.Vida <= 0
+			carta2Destruida := carta2.Vida <= 0
+
+			if carta1Destruida {
 				carta1 = nil
 				indice1++
 				estadoAtual = EstadoEsperandoCarta
-			} else {
-				estadoAtual = EstadoRealizandoTurno
+				color.Magenta("Pedir nova carta jogador 1: %d", indice1)
 			}
+			if carta2Destruida {
+				carta2 = nil
+				indice2++
+				estadoAtual = EstadoEsperandoCarta
+				color.Magenta("Pedir nova carta jogador 2: %d", indice2)
+			}
+
+			//Voltar para o estado de esperar carta
+			estadoAtual = EstadoEsperandoCarta
 
 			//Checa se acabou o deck de batalha de um jogador
 			if indice1 >= 5 {
