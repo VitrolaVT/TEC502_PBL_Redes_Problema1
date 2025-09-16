@@ -104,7 +104,7 @@ func main() {
 			case "Sorteio":
 				minhasCartas = append(minhasCartas, resposta.Cartas...)
 
-				color.Green(resposta.Tipo, resposta.Mensagem)
+				color.Green("%s\n", resposta.Mensagem)
 				imprimirTanques(resposta.Cartas)
 
 			case "Inicio_Batalha":
