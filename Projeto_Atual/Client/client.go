@@ -135,7 +135,6 @@ func main() {
 
 			case "Enviar_Próxima_Carta":
 				indice, err := strconv.Atoi(resposta.Mensagem)
-				color.Red("Indice %d", indice)
 
 				if err != nil {
 					fmt.Println("Erro ao converter:", err)
